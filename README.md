@@ -65,8 +65,10 @@ docker-compose up --build
 docker-compose exec backend python manage.py createsuperuser
 ```
 
-**Access:** http://localhost:5173  
-**Backend API:** http://localhost:8000/api/
+**Access:**
+- **Frontend Dashboard:** http://localhost
+- **Backend API:** http://localhost:8000/api/
+- **API Documentation (Swagger):** http://localhost:8000/agriculture/swagger/
 
 **Stop services:**
 ```bash
@@ -165,6 +167,10 @@ python simulator.py --plot 1 --dry 10
 ---
 
 ## 📚 API Endpoints
+
+**Interactive Documentation:**
+- [Swagger UI](http://localhost:8000/agriculture/swagger/)
+- [Redoc](http://localhost:8000/agriculture/redoc/)
 
 ### Authentication
 - `POST /api/login/` - Login (returns JWT tokens)

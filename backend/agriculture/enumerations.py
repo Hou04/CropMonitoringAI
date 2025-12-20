@@ -16,3 +16,8 @@ class SeverityLevel(models.TextChoices):
     LOW = 'LOW', 'Low Risk'
     MEDIUM = 'MED', 'Medium Risk'
     HIGH = 'HIGH', 'Critical Risk'
+
+class ConfidenceLevel(models.TextChoices):
+    LOW = 'LOW', 'Low Confidence'
+    MEDIUM = 'MED', 'Medium Confidence'
+    HIGH = 'HIGH', 'High Confidence'

@@ -16,8 +16,9 @@ from .models import FarmProfile, FieldPlot, SensorReading, AnomalyEvent, AgentRe
 from rq import Queue
 from redis import Redis
 from agriculture.tasks import run_batch  # Assuming tasks.py exists with run_batch defined
-
-q = Queue(connection=Redis(host='localhost', port=6379, db=0))  # Connect to Redis for RQ
+import os
+REDIS_HOST = os.getenv('REDIS_HOST', 'localhost')
+q = Queue(connection=Redis(host=REDIS_HOST, port=6379, db=0))  # Connect to Redis for RQ
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
@@ -146,6 +147,8 @@ class FarmProfileViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         """Filter farms by authenticated user and apply search/filters."""
+        if getattr(self, 'swagger_fake_view', False) or self.request.user.is_anonymous:
+            return FarmProfile.objects.none()
         queryset = FarmProfile.objects.filter(owner=self.request.user)
         crop_type = self.request.query_params.get('crop_type')
         if crop_type:
@@ -177,6 +180,8 @@ class FieldPlotViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         """Filter plots by user's farms and apply filters."""
+        if getattr(self, 'swagger_fake_view', False) or self.request.user.is_anonymous:
+            return FieldPlot.objects.none()
         queryset = FieldPlot.objects.filter(farm__owner=self.request.user)
         farm_id = self.request.query_params.get('farm')
         if farm_id:
@@ -187,7 +192,7 @@ class FieldPlotViewSet(viewsets.ModelViewSet):
         queryset = queryset.select_related('farm', 'farm__owner')
         return queryset.order_by('farm', 'name')
 
-    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated], url_path='generate-test-data')
     def generate_test_data(self, request, pk=None):
         """
         Generate test sensor data for demonstration purposes.
@@ -200,9 +205,12 @@ class FieldPlotViewSet(viewsets.ModelViewSet):
        
         # Parse parameters
         try:
+            print(f"⚡ Generating test data for plot {pk}...")
             days = int(request.data.get('days', 7))
             readings_per_hour = int(request.data.get('readings_per_hour', 2))
-        except (ValueError, TypeError):
+            print(f"   Days: {days}, Rate: {readings_per_hour}")
+        except (ValueError, TypeError) as e:
+            print(f"❌ Param error: {e}")
             return Response(
                 {'error': 'Invalid parameters'},
                 status=status.HTTP_400_BAD_REQUEST
@@ -218,6 +226,7 @@ class FieldPlotViewSet(viewsets.ModelViewSet):
         # Generate data
         total_per_sensor = days * 24 * readings_per_hour
         interval_min = 60 / readings_per_hour
+        print(f"   Total per sensor: {total_per_sensor}")
        
         sensors = {
             'MOI': {'base': 50.0, 'var': 8.0, 'min': 20.0, 'max': 80.0},
@@ -227,6 +236,7 @@ class FieldPlotViewSet(viewsets.ModelViewSet):
        
         try:
             with transaction.atomic():
+                print("   Starting transaction...")
                 readings = []
                 now = timezone.now()
                 current = {st: cfg['base'] for st, cfg in sensors.items()}
@@ -235,9 +245,21 @@ class FieldPlotViewSet(viewsets.ModelViewSet):
                     ts = now - timedelta(days=days) + timedelta(minutes=i * interval_min)
                    
                     for st, cfg in sensors.items():
+                        # Random walk
                         current[st] += random.uniform(-cfg['var']/2, cfg['var']/2) + random.uniform(-0.5, 0.5)
                         current[st] = max(cfg['min'], min(cfg['max'], current[st]))
-                       
+
+                        # INJECT ANOMALIES (15% chance per hour, roughly)
+                        if random.random() < 0.05:
+                            if st == 'MOI' and random.random() < 0.5:
+                                current[st] = random.uniform(15.0, 30.0)  # Low Moisture
+                                print(f"   ⚠️ Injecting LOW MOISTURE: {current[st]}")
+                            elif st == 'TMP' and random.random() < 0.5:
+                                current[st] = random.uniform(38.0, 45.0)  # Heat Spike
+                                print(f"   ⚠️ Injecting HEAT: {current[st]}")
+                            elif st == 'HUM' and random.random() < 0.3:
+                                current[st] = random.uniform(5.0, 14.0)   # Low Humidity
+                        
                         readings.append(SensorReading(
                             plot=plot,
                             sensor_type=st,
@@ -245,26 +267,49 @@ class FieldPlotViewSet(viewsets.ModelViewSet):
                             timestamp=ts,
                             source='test_data_generator'
                         ))
-               
+                
+                print(f"   Created {len(readings)} objects in memory. Bulk inserting...")
+                
                 # Bulk create
-                created = 0
-                for i in range(0, len(readings), 500):
-                    SensorReading.objects.bulk_create(readings[i:i+500], ignore_conflicts=True)
-                    created += min(500, len(readings) - i)
+                created_objs = SensorReading.objects.bulk_create(readings, ignore_conflicts=True)
+                print(f"✅ Successfully inserted {len(created_objs)} readings.")
+                
+                # Trigger detection manually (signals don't fire on bulk_create)
+                # We only check the injected anomalies to save time, or check all if fast enough
+                from agriculture.detector import detect_anomaly
+                from agriculture.agent import generate_recommendation
+                
+                print("🔍 Running anomaly detection on generated data...")
+                anomalies_found = 0
+                for reading in created_objs:
+                    # Optimization: Only check readings that are likely anomalies (we know what we injected)
+                    # But for correctness, let's check the ones we suspect or just check all (might be slow if thousands)
+                    # Given it's a demo with ~300 readings (7 days * 24 * 2), checking all is fine.
+                    if detect_anomaly(reading):
+                        anomalies_found += 1
+                        # Retrieve the anomaly created by detector
+                        anomaly = AnomalyEvent.objects.filter(plot=plot).order_by('-timestamp').first()
+                        if anomaly:
+                            generate_recommendation(anomaly)
+                            
+                print(f"🚨 Generated {anomalies_found} anomalies and recommendations.")
            
             return Response({
                 'message': 'Successfully generated test data',
-                'count': created,
+                'count': len(created_objs),
                 'plot_id': plot.id,
                 'plot_name': plot.name,
                 'period_days': days
             }, status=status.HTTP_201_CREATED)
            
         except Exception as e:
+            import traceback
+            traceback.print_exc()
+            print(f"❌ Error generating data: {e}")
             import logging
             logging.getLogger(__name__).error(f"Error generating data: {e}")
             return Response(
-                {'error': 'Failed to generate test data'},
+                {'error': f'Failed to generate test data: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
@@ -395,6 +440,8 @@ class AnomalyEventViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         """Filter anomalies by user's plots with various filters."""
+        if getattr(self, 'swagger_fake_view', False) or self.request.user.is_anonymous:
+            return AnomalyEvent.objects.none()
         queryset = AnomalyEvent.objects.filter(plot__farm__owner=self.request.user)
         plot_id = self.request.query_params.get('plot')
         if plot_id:
@@ -455,6 +502,8 @@ class AgentRecommendationViewSet(viewsets.ReadOnlyModelViewSet):
 
     def get_queryset(self):
         """Filter recommendations by user's plots."""
+        if getattr(self, 'swagger_fake_view', False) or self.request.user.is_anonymous:
+            return AgentRecommendation.objects.none()
         queryset = AgentRecommendation.objects.filter(anomaly__plot__farm__owner=self.request.user)
         plot_id = self.request.query_params.get('plot')
         if plot_id:

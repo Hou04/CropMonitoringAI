@@ -30,3 +30,4 @@ def on_new_reading(sender, instance, created, **kwargs):
     if anomaly:
         print("🤖 Generating AI recommendation...")
         generate_recommendation(anomaly)
+

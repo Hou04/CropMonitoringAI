@@ -24,6 +24,7 @@ redis = "*"
 django-redis = "*"
 rq = "*"
 django-rq = "*"
+drf-yasg = "*"
 
 [dev-packages]
 

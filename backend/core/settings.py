@@ -42,7 +42,9 @@ INSTALLED_APPS = [
     'rest_framework_simplejwt',        
     'agriculture',
     'corsheaders',
+    'drf_yasg',
 ]
+
 
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',

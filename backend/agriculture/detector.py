@@ -1,5 +1,5 @@
 # agriculture/detector.py
-# FIXED + IMPROVED VERSION - November 22, 2025 - Houcine the Legend
+#Hedha li fih logic metier taa el detctor kifezch el projet ydetecti koll anomaly a travers 4 layers  
 
 import numpy as np
 from sklearn.ensemble import IsolationForest
@@ -25,7 +25,10 @@ def detect_anomaly(reading):
             # Rule 1: Critical low moisture
             if value < 32:
                 anomaly_type = "LOW_MOISTURE"
-                confidence = 0.96
+                # Dynamic confidence based on deviation
+                # 32 = 0.7 (Low), 20 = 0.9 (High)
+                deviation = 32 - value
+                confidence = 0.7 + min(deviation / 20.0, 0.29)  # Cap at 0.99
 
             # Rule 2: Sudden drop detection
             one_hour_ago = now - timedelta(hours=1)
@@ -39,9 +42,11 @@ def detect_anomaly(reading):
                 values = [float(r.value) for r in recent if r.value is not None]
                 if values and value < max(values) - 14:
                     anomaly_type = "DROP"
-                    confidence = 0.99
+                    # Dynamic: larger drop = higher confidence
+                    drop_size = max(values) - value
+                    confidence = 0.8 + min((drop_size - 14) / 20.0, 0.19)
                     details["previous_high"] = max(values)
-                    details["drop_amount"] = round(max(values) - value, 2)
+                    details["drop_amount"] = round(drop_size, 2)
 
             # Rule 3: Z-score outlier
             day_ago = now - timedelta(hours=24)
@@ -57,9 +62,10 @@ def detect_anomaly(reading):
                 mean = np.mean(history)
                 std = np.std(history) if np.std(history) > 0 else 1
                 z_score = abs(value - mean) / std
-                if z_score > 3.7:
+                if z_score > 3.0: # Lowered threshold slightly to catch more
                     anomaly_type = anomaly_type or "OUTLIER"
-                    confidence = max(confidence, min(z_score * 0.2, 0.99))
+                    # Dynamic: 3.0 -> 0.6, 6.0 -> 0.99
+                    confidence = max(confidence, min(0.6 + (z_score - 3.0) * 0.1, 0.99))
                     details["z_score"] = round(z_score, 2)
 
             # Rule 4: Isolation Forest
@@ -80,7 +86,8 @@ def detect_anomaly(reading):
         # Temperature heat stress
         elif sensor_type == "TMP" and value > 37.5:
             anomaly_type = "HEAT"
-            confidence = 0.93
+            # 37.5 -> 0.75, 45 -> 0.99
+            confidence = 0.75 + min((value - 37.5) / 10.0, 0.24)
             details["temperature"] = value
 
         # Humidity sensor error
