@@ -1,4 +1,6 @@
 # 🌱 Crop Monitoring Platform
+IDEA BY MR BAYYOUDHI CHOUAKI
+
 
 AI-enhanced crop monitoring system with real-time sensor data analysis, anomaly detection, and automated recommendations.
 
